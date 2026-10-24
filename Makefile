@@ -2,25 +2,45 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -s -w -X main.version=$(VERSION) -X main.buildTime=$(BUILD_TIME) -X main.commit=$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 
-.PHONY: build clean test docker install build-linux build-linux-arm64 build-all
+.PHONY: build build-target clean test docker install \
+	build-linux build-linux-arm64 build-darwin-amd64 build-darwin-arm64 \
+	build-windows-amd64 build-windows-arm64 build-all
+
+TARGET_GOOS ?= $(shell go env GOOS)
+TARGET_GOARCH ?= $(shell go env GOARCH)
+TARGET_SUFFIX = $(if $(filter windows,$(TARGET_GOOS)),.exe,)
+TARGET_TAGS = with_quic with_utls with_wireguard with_acme with_clash_api
 
 # Build for current platform
 build:
-	go build -ldflags "$(LDFLAGS)" -tags "with_quic with_utls with_wireguard with_clash_api" -o xboard-node ./cmd/xboard-node
-	go build -ldflags "$(LDFLAGS)" -o xbctl ./cmd/xbctl
+	go build -ldflags "$(LDFLAGS)" -tags "with_quic with_utls with_wireguard with_clash_api" -o xboard-node$(TARGET_SUFFIX) ./cmd/xboard-node
+	go build -ldflags "$(LDFLAGS)" -o xbctl$(TARGET_SUFFIX) ./cmd/xbctl
 
-# Build for Linux amd64
+# Build an explicitly selected target, e.g. make build-target TARGET_GOOS=windows TARGET_GOARCH=arm64.
+build-target:
+	CGO_ENABLED=0 GOOS=$(TARGET_GOOS) GOARCH=$(TARGET_GOARCH) go build -ldflags "$(LDFLAGS)" -tags "$(TARGET_TAGS)" -o xboard-node-$(TARGET_GOOS)-$(TARGET_GOARCH)$(TARGET_SUFFIX) ./cmd/xboard-node
+	CGO_ENABLED=0 GOOS=$(TARGET_GOOS) GOARCH=$(TARGET_GOARCH) go build -ldflags "$(LDFLAGS)" -o xbctl-$(TARGET_GOOS)-$(TARGET_GOARCH)$(TARGET_SUFFIX) ./cmd/xbctl
+
 build-linux:
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -tags "with_quic with_utls with_wireguard with_acme with_clash_api" -o xboard-node-linux-amd64 ./cmd/xboard-node
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o xbctl-linux-amd64 ./cmd/xbctl
+	$(MAKE) build-target TARGET_GOOS=linux TARGET_GOARCH=amd64
 
-# Build for Linux arm64
 build-linux-arm64:
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -tags "with_quic with_utls with_wireguard with_acme with_clash_api" -o xboard-node-linux-arm64 ./cmd/xboard-node
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o xbctl-linux-arm64 ./cmd/xbctl
+	$(MAKE) build-target TARGET_GOOS=linux TARGET_GOARCH=arm64
 
-# Build all platforms
-build-all: build-linux build-linux-arm64
+build-darwin-amd64:
+	$(MAKE) build-target TARGET_GOOS=darwin TARGET_GOARCH=amd64
+
+build-darwin-arm64:
+	$(MAKE) build-target TARGET_GOOS=darwin TARGET_GOARCH=arm64
+
+build-windows-amd64:
+	$(MAKE) build-target TARGET_GOOS=windows TARGET_GOARCH=amd64
+
+build-windows-arm64:
+	$(MAKE) build-target TARGET_GOOS=windows TARGET_GOARCH=arm64
+
+# Build all release binary targets.
+build-all: build-linux build-linux-arm64 build-darwin-amd64 build-darwin-arm64 build-windows-amd64 build-windows-arm64
 
 # Run tests
 test:
@@ -28,7 +48,7 @@ test:
 
 # Clean build artifacts
 clean:
-	rm -f xboard-node xbctl xboard-node-linux-* xbctl-linux-*
+	rm -f xboard-node xbctl xboard-node-*-* xbctl-*-* xboard-node-*-*.exe xbctl-*-*.exe
 
 # Build Docker image
 docker:
