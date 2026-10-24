@@ -27,6 +27,7 @@ panel:
 kernel:
   type: singbox
   log_level: warn
+  routing_domain_strategy: IPIfNonMatch
 log:
   level: debug
 `)
@@ -48,6 +49,9 @@ log:
 	}
 	if cfg.Kernel.Type != "singbox" {
 		t.Errorf("kernel.type: got %q", cfg.Kernel.Type)
+	}
+	if cfg.Kernel.RoutingDomainStrategy != "IPIfNonMatch" {
+		t.Errorf("kernel.routing_domain_strategy: got %q", cfg.Kernel.RoutingDomainStrategy)
 	}
 	if cfg.Log.Level != "debug" {
 		t.Errorf("log.level: got %q", cfg.Log.Level)
@@ -327,7 +331,6 @@ kernel:
 	}
 }
 
-
 func TestLoadRoot_LegacyConfigNormalizesToSingleInstance(t *testing.T) {
 	path := writeTemp(t, `
 panel:
@@ -419,6 +422,7 @@ log:
 kernel:
   type: xray
   log_level: "error"
+  routing_domain_strategy: "IPIfNonMatch"
 node:
   push_interval: 42
   pull_interval: 99
@@ -455,6 +459,9 @@ instances:
 	if inst0.Kernel.LogLevel != "error" {
 		t.Errorf("inst0 kernel.log_level: got %q, want %q", inst0.Kernel.LogLevel, "error")
 	}
+	if inst0.Kernel.RoutingDomainStrategy != "IPIfNonMatch" {
+		t.Errorf("inst0 kernel.routing_domain_strategy: got %q, want %q", inst0.Kernel.RoutingDomainStrategy, "IPIfNonMatch")
+	}
 	if inst0.Node.PushInterval != 42 {
 		t.Errorf("inst0 push_interval: got %d, want 42", inst0.Node.PushInterval)
 	}
@@ -471,6 +478,9 @@ instances:
 	}
 	if inst1.Kernel.Type != "xray" {
 		t.Errorf("inst1 kernel.type: got %q, want %q", inst1.Kernel.Type, "xray")
+	}
+	if inst1.Kernel.RoutingDomainStrategy != "IPIfNonMatch" {
+		t.Errorf("inst1 kernel.routing_domain_strategy: got %q, want %q", inst1.Kernel.RoutingDomainStrategy, "IPIfNonMatch")
 	}
 }
 

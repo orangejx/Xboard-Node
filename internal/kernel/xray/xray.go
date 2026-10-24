@@ -17,7 +17,6 @@ import (
 	xrayCore "github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/features/inbound"
 	"github.com/xtls/xray-core/features/stats"
-	featurebandwidth "github.com/xtls/xray-core/features/bandwidth"
 	"github.com/xtls/xray-core/infra/conf/serial"
 	xrayProxy "github.com/xtls/xray-core/proxy"
 	"github.com/xtls/xray-core/proxy/shadowsocks"
@@ -32,8 +31,8 @@ import (
 	"github.com/cedar2025/xboard-node/internal/config"
 	"github.com/cedar2025/xboard-node/internal/kernel"
 	"github.com/cedar2025/xboard-node/internal/kernel/geodata"
-	"github.com/cedar2025/xboard-node/internal/nlog"
 	"github.com/cedar2025/xboard-node/internal/model"
+	"github.com/cedar2025/xboard-node/internal/nlog"
 )
 
 const (
@@ -67,7 +66,6 @@ type Xray struct {
 	inboundTag      string
 	lastKernelHash  string
 	cumTraffic      map[int][2]int64
-	speedLimitFunc  func(string) *rate.Limiter
 
 	// running is set after a successful Start and cleared before shutdown.
 	// Atomic so IsRunning / GetConnections never block.
@@ -85,7 +83,7 @@ func (x *Xray) Name() string { return "xray" }
 
 func (x *Xray) Capabilities() kernel.Capabilities {
 	return kernel.Capabilities{
-		PerUserSpeedLimit:    true,
+		PerUserSpeedLimit:    false,
 		DeviceLimit:          true,
 		BuiltInTrafficStats:  true,
 		AliveIPTracking:      true,
@@ -163,7 +161,6 @@ func (x *Xray) Start(nodeConfig *model.NodeSpec, users []model.UserSpec, tls ker
 	closeOld(old, oldLD)
 
 	x.updateDispatcherLimits(users)
-	x.updateBandwidthLimits(users)
 
 	nlog.Core().Info("xray started",
 		"users", len(users),
@@ -178,7 +175,6 @@ func (x *Xray) Start(nodeConfig *model.NodeSpec, users []model.UserSpec, tls ker
 // if any kernel-affecting fields (hash mismatch) have changed.
 func (x *Xray) Reload(nodeConfig *model.NodeSpec, users []model.UserSpec, tls kernel.TLSCert) error {
 	x.updateDispatcherLimits(users)
-	x.updateBandwidthLimits(users)
 
 	newHash := kernel.ComputeHash(nodeConfig, users)
 
@@ -255,15 +251,9 @@ func (x *Xray) CloseUserConnections(_ context.Context, _ string) error {
 	return nil
 }
 
-// SetSpeedLimitFunc wires xray's patched bandwidth feature to the shared
-// per-user limiter callback used by the service layer. Unlike the old no-op
-// behavior, xray now consumes this callback to support dynamic speed updates.
-func (x *Xray) SetSpeedLimitFunc(fn func(string) *rate.Limiter) {
-	x.mu.Lock()
-	x.speedLimitFunc = fn
-	x.mu.Unlock()
-	x.updateBandwidthLimits(nil)
-}
+// SetSpeedLimitFunc is a no-op because upstream xray-core does not provide
+// dynamic per-user bandwidth limiting.
+func (x *Xray) SetSpeedLimitFunc(_ func(string) *rate.Limiter) {}
 
 // SetDeviceLimitFunc is a no-op for xray — device limits are already
 // gate-kept by LimitDispatcher.checkDeviceLimit at Dispatch time.
@@ -314,7 +304,6 @@ func (x *Xray) AddUsers(users []model.UserSpec) (int, error) {
 		x.users = merged
 		x.mu.Unlock()
 		x.updateDispatcherLimits(merged)
-	x.updateBandwidthLimits(merged)
 		return 0, nil
 	}
 
@@ -354,7 +343,6 @@ func (x *Xray) AddUsers(users []model.UserSpec) (int, error) {
 	x.users = merged
 	x.mu.Unlock()
 	x.updateDispatcherLimits(merged)
-	x.updateBandwidthLimits(merged)
 
 	nlog.Core().Info("xray: users added via UserManager", "added", added, "total", len(merged))
 	return added, nil
@@ -419,7 +407,6 @@ func (x *Xray) RemoveUsers(users []model.UserSpec) (int, error) {
 	x.users = kept
 	x.mu.Unlock()
 	x.updateDispatcherLimits(kept)
-	x.updateBandwidthLimits(kept)
 
 	nlog.Core().Info("xray: users removed via UserManager", "removed", actualRemoved, "total", len(kept))
 	return actualRemoved, nil
@@ -442,7 +429,6 @@ func (x *Xray) UpdateUsers(users []model.UserSpec) (added, removed int, err erro
 		x.users = users
 		x.mu.Unlock()
 		x.updateDispatcherLimits(users)
-		x.updateBandwidthLimits(users)
 		nlog.Core().Info("xray: limits updated, kernel unchanged")
 		return 0, 0, nil
 	}
@@ -487,7 +473,6 @@ func (x *Xray) UpdateUsers(users []model.UserSpec) (added, removed int, err erro
 	x.users = users
 	x.mu.Unlock()
 	x.updateDispatcherLimits(users)
-	x.updateBandwidthLimits(users)
 
 	nlog.Core().Info("xray: users updated via UserManager", "added", added, "removed", removed, "total", len(users))
 	return
@@ -572,7 +557,7 @@ func toMemoryUser(proto string, nc *model.NodeSpec, u model.UserSpec) (*protocol
 	case "shadowsocks":
 		if strings.HasPrefix(nc.Cipher, "2022-blake3-") {
 			// 2022-blake3 multi-user mode
-			mu.Account = &ss2022.MemoryAccount{Key: u.UUID}
+			mu.Account = &ss2022.MemoryAccount{Key: []byte(u.UUID)}
 		} else {
 			// Traditional SS — build via getCipher path
 			ct := parseCipherType(nc.Cipher)
@@ -602,7 +587,7 @@ func parseCipherType(cipher string) shadowsocks.CipherType {
 	case "xchacha20-ietf-poly1305", "xchacha20-poly1305":
 		return shadowsocks.CipherType_XCHACHA20_POLY1305
 	case "none", "plain":
-		return shadowsocks.CipherType_NONE
+		return shadowsocks.CipherType_UNKNOWN
 	default:
 		return shadowsocks.CipherType_AES_256_GCM
 	}
@@ -742,43 +727,8 @@ func (x *Xray) aggregateStats() (map[int][2]int64, error) {
 	return traffic, nil
 }
 
-// updateBandwidthLimits configures the patched xray-core bandwidth feature
-// with per-user speed limits in bytes per second.
-func (x *Xray) updateBandwidthLimits(users []model.UserSpec) {
-	x.mu.Lock()
-	inst := x.instance
-	fn := x.speedLimitFunc
-	currentUsers := x.users
-	x.mu.Unlock()
-	if inst == nil {
-		return
-	}
-	feat := inst.GetFeature(featurebandwidth.ManagerType())
-	if feat == nil {
-		return
-	}
-	bm, ok := feat.(featurebandwidth.Manager)
-	if !ok {
-		return
-	}
-	bm.Reset()
-	if users == nil {
-		users = currentUsers
-	}
-	for _, u := range users {
-		email := userEmail(u.ID)
-		if fn != nil {
-			bm.SetUserLimiter(email, fn(u.UUID))
-			continue
-		}
-		bps := int64(u.SpeedLimit) * 1_000_000 / 8
-		bm.SetUserLimit(email, bps)
-	}
-}
-
 // updateDispatcherLimits configures the LimitDispatcher with per-user
-// device-limit admission metadata only. Speed limits are enforced by the
-// patched xray-core bandwidth feature.
+// device-limit admission metadata.
 func (x *Xray) updateDispatcherLimits(users []model.UserSpec) {
 	x.mu.Lock()
 	ld := x.limitDispatcher

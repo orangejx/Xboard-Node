@@ -263,6 +263,9 @@ func TestBuildRouting_Default(t *testing.T) {
 	routing := buildRouting(nil, nil, nil)
 	rules := routing["rules"].([]M)
 
+	if routing["domainStrategy"] != "AsIs" {
+		t.Errorf("default domain strategy: got %v, want AsIs", routing["domainStrategy"])
+	}
 	if len(rules) != 1 {
 		t.Fatalf("expected 1 default rule, got %d", len(rules))
 	}
@@ -273,6 +276,21 @@ func TestBuildRouting_Default(t *testing.T) {
 	ips := rules[0]["ip"].([]string)
 	if len(ips) < 5 {
 		t.Errorf("expected multiple private CIDRs, got %d", len(ips))
+	}
+}
+
+func TestBuildConfig_RoutingDomainStrategy(t *testing.T) {
+	nc := &panel.NodeConfig{Protocol: "shadowsocks", ServerPort: 8388, Cipher: "aes-128-gcm"}
+	cfg := buildConfig(config.KernelConfig{RoutingDomainStrategy: "IPIfNonMatch"}, testNodeSpec(nc), testUsers, kernel.TLSCert{})
+	if cfg["routing"].(M)["domainStrategy"] != "IPIfNonMatch" {
+		t.Errorf("domain strategy: got %v, want IPIfNonMatch", cfg["routing"].(M)["domainStrategy"])
+	}
+}
+
+func TestBuildRouting_DomainStrategy(t *testing.T) {
+	routing := buildRouting(nil, nil, nil, "IPIfNonMatch")
+	if routing["domainStrategy"] != "IPIfNonMatch" {
+		t.Errorf("domain strategy: got %v, want IPIfNonMatch", routing["domainStrategy"])
 	}
 }
 
@@ -367,18 +385,25 @@ func TestBuildRouting_WithCustomRouteRules(t *testing.T) {
 }
 
 func TestBuildRouting_StructuredCustomRulesRemainFirst(t *testing.T) {
-	raw := []map[string]any{{"type": "field", "domain": []string{"keyword:raw"}, "outboundTag": "raw-tag"}}
+	raw := []map[string]any{{"type": "field", "ip": []string{"0.0.0.0/0", "::/0"}, "outboundTag": "raw-tag"}}
 	custom := []model.CustomRouteRule{{
 		Match:  model.RouteMatch{DomainSuffixes: []string{"structured.example"}},
 		Action: model.RouteAction{Type: "direct"},
 	}}
-	routing := buildRouting(nil, custom, raw)
+	panelRules := testRouteRules([]panel.RouteRule{{Match: []string{"panel.example"}, Action: "direct"}})
+	routing := buildRouting(panelRules, custom, raw)
 	xrayRules := routing["rules"].([]M)
-	if xrayRules[0]["outboundTag"] != "direct" {
-		t.Fatalf("expected structured rule first, got %v", xrayRules[0]["outboundTag"])
+	if xrayRules[0]["outboundTag"] != "direct" || xrayRules[0]["domain"].([]string)[0] != "domain:structured.example" {
+		t.Fatalf("expected structured rule first, got %v", xrayRules[0])
 	}
-	if xrayRules[1]["outboundTag"] != "raw-tag" {
-		t.Fatalf("expected raw custom rule second, got %v", xrayRules[1]["outboundTag"])
+	if xrayRules[1]["outboundTag"] != "block" {
+		t.Fatalf("expected private block rule before raw catch-all, got %v", xrayRules[1]["outboundTag"])
+	}
+	if xrayRules[2]["outboundTag"] != "raw-tag" {
+		t.Fatalf("expected raw catch-all after private block, got %v", xrayRules[2]["outboundTag"])
+	}
+	if xrayRules[3]["outboundTag"] != "direct" || xrayRules[3]["domain"].([]string)[0] != "domain:panel.example" {
+		t.Fatalf("expected panel rule after raw custom rule, got %v", xrayRules[3])
 	}
 }
 
