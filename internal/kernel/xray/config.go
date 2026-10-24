@@ -78,7 +78,7 @@ func buildConfig(kcfg config.KernelConfig, nc *model.NodeSpec, users []model.Use
 	}
 
 	// Merge panel routes and static config routes
-	cfg["routing"] = buildRouting(nc.Routes, nc.CustomRouteRules, mergeRouteList(nc.CustomRoutes, kcfg.CustomRoute))
+	cfg["routing"] = buildRouting(nc.Routes, nc.CustomRouteRules, mergeRouteList(nc.CustomRoutes, kcfg.CustomRoute), kcfg.RoutingDomainStrategy)
 
 	mergeCustomXray(cfg, kcfg)
 	return cfg
@@ -645,7 +645,12 @@ func buildRealitySettings(nc *model.NodeSpec) M {
 	return reality
 }
 
-func buildRouting(rules []model.RouteRule, customRouteRules []model.CustomRouteRule, customRules []map[string]any) M {
+func buildRouting(rules []model.RouteRule, customRouteRules []model.CustomRouteRule, customRules []map[string]any, domainStrategies ...string) M {
+	domainStrategy := "AsIs"
+	if len(domainStrategies) > 0 && domainStrategies[0] != "" {
+		domainStrategy = domainStrategies[0]
+	}
+
 	var xrayRules []M
 
 	// Structured custom routes now take the highest priority for panel-managed overrides.
@@ -654,11 +659,6 @@ func buildRouting(rules []model.RouteRule, customRouteRules []model.CustomRouteR
 			continue
 		}
 		xrayRules = append(xrayRules, compileCustomRouteRule(rule)...)
-	}
-
-	// Raw custom routes remain the escape hatch, but no longer outrank structured rules.
-	for _, cr := range customRules {
-		xrayRules = append(xrayRules, M(cr))
 	}
 
 	xrayRules = append(xrayRules, M{
@@ -679,12 +679,17 @@ func buildRouting(rules []model.RouteRule, customRouteRules []model.CustomRouteR
 		"outboundTag": "block",
 	})
 
+	// Raw custom routes remain the escape hatch, but no longer outrank structured rules.
+	for _, cr := range customRules {
+		xrayRules = append(xrayRules, M(cr))
+	}
+
 	for _, rule := range rules {
 		xrayRules = append(xrayRules, compilePanelRouteRule(rule)...)
 	}
 
 	return M{
-		"domainStrategy": "AsIs",
+		"domainStrategy": domainStrategy,
 		"rules":          xrayRules,
 	}
 }

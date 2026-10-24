@@ -19,14 +19,14 @@ import (
 )
 
 type Config struct {
-	InstanceID string `yaml:"-"`
-	Panel   PanelConfig   `yaml:"panel"`
-	Node    NodeConfig    `yaml:"node"`
-	Kernel  KernelConfig  `yaml:"kernel"`
-	Cert    CertConfig    `yaml:"cert"`
-	Log     LogConfig     `yaml:"log"`
-	Runtime RuntimeConfig `yaml:"runtime"`
-	WS      WSConfig      `yaml:"ws"`
+	InstanceID string        `yaml:"-"`
+	Panel      PanelConfig   `yaml:"panel"`
+	Node       NodeConfig    `yaml:"node"`
+	Kernel     KernelConfig  `yaml:"kernel"`
+	Cert       CertConfig    `yaml:"cert"`
+	Log        LogConfig     `yaml:"log"`
+	Runtime    RuntimeConfig `yaml:"runtime"`
+	WS         WSConfig      `yaml:"ws"`
 	// Standalone enables a local-only node that never contacts the panel.
 	Standalone *StandaloneConfig `yaml:"standalone,omitempty"`
 	// HealthPort enables a lightweight HTTP health-check endpoint on the
@@ -118,9 +118,10 @@ type WSConfig struct {
 }
 
 type KernelConfig struct {
-	Type      string `yaml:"type"` // "singbox" or "xray"
-	ConfigDir string `yaml:"config_dir"`
-	LogLevel  string `yaml:"log_level"`
+	Type                  string `yaml:"type"` // "singbox" or "xray"
+	ConfigDir             string `yaml:"config_dir"`
+	LogLevel              string `yaml:"log_level"`
+	RoutingDomainStrategy string `yaml:"routing_domain_strategy"`
 
 	// GeoDataDir is the directory that contains GeoIP/GeoSite database files.
 	// For sing-box: geoip.db and geosite.db (geoip2-format).
@@ -500,6 +501,9 @@ func (c *Config) inheritFrom(parent *Config) {
 	}
 	if c.Kernel.LogLevel == "" {
 		c.Kernel.LogLevel = parent.Kernel.LogLevel
+	}
+	if c.Kernel.RoutingDomainStrategy == "" {
+		c.Kernel.RoutingDomainStrategy = parent.Kernel.RoutingDomainStrategy
 	}
 	if c.Kernel.GeoDataDir == "" {
 		c.Kernel.GeoDataDir = parent.Kernel.GeoDataDir
