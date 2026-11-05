@@ -1,6 +1,7 @@
 package xray
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
@@ -10,6 +11,7 @@ import (
 	"github.com/cedar2025/xboard-node/internal/kernel"
 	"github.com/cedar2025/xboard-node/internal/model"
 	"github.com/cedar2025/xboard-node/internal/panel"
+	"github.com/xtls/xray-core/infra/conf/serial"
 )
 
 var testKernelCfg = config.KernelConfig{
@@ -513,6 +515,41 @@ func TestBuildConfig_Shadowsocks_MultiUser(t *testing.T) {
 	clients := settings["clients"].([]interface{})
 	if len(clients) != 2 {
 		t.Fatalf("expected 2 clients, got %d", len(clients))
+	}
+}
+
+func TestBuildConfig_HysteriaV2(t *testing.T) {
+	nc := panel.NodeConfig{
+		Protocol:   "hysteria",
+		ListenIP:   "0.0.0.0",
+		ServerPort: 53108,
+		Version:    2,
+		ServerName: "lhr.example.com",
+	}
+	raw, err := marshalConfig(testKernelCfg, testNodeSpec(&nc), testUsers, kernel.TLSCert{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := serial.LoadJSONConfig(bytes.NewReader(raw)); err != nil {
+		t.Fatalf("xray rejected hysteria config: %v", err)
+	}
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	ib := parsed["inbounds"].([]interface{})[0].(map[string]interface{})
+	settings := ib["settings"].(map[string]interface{})
+	if settings["version"] != float64(2) {
+		t.Fatalf("settings.version = %v, want 2", settings["version"])
+	}
+	ss := ib["streamSettings"].(map[string]interface{})
+	hs := ss["hysteriaSettings"].(map[string]interface{})
+	if hs["version"] != float64(2) {
+		t.Fatalf("hysteriaSettings.version = %v, want 2", hs["version"])
+	}
+	if ss["network"] != "hysteria" {
+		t.Fatalf("network = %v, want hysteria", ss["network"])
 	}
 }
 

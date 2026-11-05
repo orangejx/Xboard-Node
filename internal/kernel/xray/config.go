@@ -414,7 +414,13 @@ func buildHysteria(base M, nc *model.NodeSpec, users []model.UserSpec, tc kernel
 			"email": userEmail(u.ID),
 		})
 	}
-	base["settings"] = M{"clients": clients}
+	// Xray reads the protocol version from inbound settings. hysteriaSettings.version
+	// only configures the transport; omitting this field decodes as 0 and Xray
+	// rejects the inbound with "version != 2".
+	base["settings"] = M{
+		"version": nc.Version,
+		"clients": clients,
+	}
 
 	ss := M{
 		"network": "hysteria",
